@@ -44,19 +44,24 @@ echo "🛠️ Setting ownership and permissions..."
 # Bitcoin
 chown -R "$PUID:$PGID" "${DOCKERCONFDIR}/bitcoin"
 chmod 777 "${DOCKERCONFDIR}/bitcoin"
-chmod 664 "${DOCKERCONFDIR}/bitcoin/"*.{conf,Dockerfile,.dockerignore}
+chmod 664 "${DOCKERCONFDIR}/bitcoin/"*.conf
+[ -f "${DOCKERCONFDIR}/bitcoin/Dockerfile" ]     && chmod 664 "${DOCKERCONFDIR}/bitcoin/Dockerfile"
+[ -f "${DOCKERCONFDIR}/bitcoin/.dockerignore" ]  && chmod 664 "${DOCKERCONFDIR}/bitcoin/.dockerignore"
+mkdir -p "${DOCKERCONFDIR}/bitcoin/bitcoin-data"
 chmod 700 "${DOCKERCONFDIR}/bitcoin/bitcoin-data"
 
 # Bitcoin Explorer
 chown -R "$PUID:$PGID" "${DOCKERCONFDIR}/bitcoin-explorer"
 chmod 777 "${DOCKERCONFDIR}/bitcoin-explorer"
-chmod 664 "${DOCKERCONFDIR}/bitcoin-explorer/"*.{conf,Dockerfile}
+chmod 664 "${DOCKERCONFDIR}/bitcoin-explorer/"*.conf
+[ -f "${DOCKERCONFDIR}/bitcoin-explorer/Dockerfile" ] && chmod 664 "${DOCKERCONFDIR}/bitcoin-explorer/Dockerfile"
 
 # CKPool (cksolo)
 chown -R "$PUID:$PGID" "${DOCKERCONFDIR}/cksolo"
 chmod 777 "${DOCKERCONFDIR}/cksolo"
 chmod 777 "${DOCKERCONFDIR}/cksolo/"{start.sh,Dockerfile,ckpool.conf}
 chmod 555 "${DOCKERCONFDIR}/cksolo/.dockerignore"
+mkdir -p "${DOCKERCONFDIR}/cksolo/logs"
 chmod 775 "${DOCKERCONFDIR}/cksolo/logs"
 
 # CKStats
@@ -64,6 +69,7 @@ chown -R "$PUID:$PGID" "${DOCKERCONFDIR}/ckstats"
 chmod 777 "${DOCKERCONFDIR}/ckstats"
 chmod 664 "${DOCKERCONFDIR}/ckstats/"{Dockerfile,supervisord.conf,ckstats-cron,.env.template}
 chmod 755 "${DOCKERCONFDIR}/ckstats/startup.sh"
+mkdir .p "${DOCKERCONFDIR}/ckstats/pgdata"
 chown -R 100:103 "${DOCKERCONFDIR}/ckstats/pgdata"
 chmod 700 "${DOCKERCONFDIR}/ckstats/pgdata"
 
@@ -71,6 +77,7 @@ chmod 700 "${DOCKERCONFDIR}/ckstats/pgdata"
 chown -R "$PUID:$PGID" "${DOCKERCONFDIR}/fulcrum"
 chmod 777 "${DOCKERCONFDIR}/fulcrum"
 chmod 664 "${DOCKERCONFDIR}/fulcrum/"{Dockerfile,fulcrum.conf}
+mkdir -p "${DOCKERCONFDIR}/fulcrum/data"
 chmod 777 "${DOCKERCONFDIR}/fulcrum/data"
 chmod 755 "${DOCKERCONFDIR}/fulcrum/.dockerignore"
 
@@ -79,6 +86,7 @@ chown -R 472:472 "${DOCKERCONFDIR}/grafana"
 chmod 777 "${DOCKERCONFDIR}/grafana"
 
 # InfluxDB
+mkdir -p "${DOCKERCONFDIR}/influxdb"
 chown -R 1000:users "${DOCKERCONFDIR}/influxdb"
 chmod 777 "${DOCKERCONFDIR}/influxdb"
 
