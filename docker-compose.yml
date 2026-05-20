@@ -3,7 +3,6 @@ version: "3.9"
 networks:
   bitcoin:
     name: bitcoin
-    external: true
     enable_ipv6: false
 
 # ---------------------------------------------------------------------
