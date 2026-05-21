@@ -22,15 +22,16 @@ x-common-logging: &common-logging-restart-unless-stopped
 # ---------------------------------------------------------------------
 
 services:
+
 # MariaDB - MySQL Database
   mariadb:
-    profiles: ["prod"] # only runs with dev profile
+    profiles: ["prod", "mempool"]  # FIX: "mempool" ergänzt, da mempool-web/-api darauf warten
     container_name: mariadb
     image: lscr.io/linuxserver/mariadb:latest
     stop_grace_period: 1m
     <<: *common-logging-restart-unless-stopped
     networks:
-      muffinnetwork:
+      bitcoin:
         aliases:
           - mariadb
       bitcoin: {}
@@ -45,7 +46,7 @@ services:
       MARIADB_AUTO_UPGRADE: "true"
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - /etc/TZ:/etc/timezone:ro
+      - /etc/timezone:/etc/timezone:ro
       - ${DOCKERCONFDIR}/mariadb:/config:rw
 
 ######################################################################################################
@@ -54,14 +55,24 @@ services:
   bitcoind:
     profiles: ["bitcoin"]
     container_name: bitcoin-node
-    image: bitcoin-core:31.0  # use your built image, or build below
+    image: bitcoin-core:31.0
     build:
       context: ./bitcoin
       args:
-        BITCOIN_VERSION: "31.0"       # Pass ARG into Dockerfile
+        BITCOIN_VERSION: "31.0"
     stop_grace_period: 1m
     user: "${PUID}:${PGID}"
     <<: *common-logging-restart-unless-stopped
+    # FIX: Healthcheck ergänzt – ckpool depends_on wartet jetzt auf echte RPC-Bereitschaft
+    healthcheck:
+      test: ["CMD", "bitcoin-cli",
+             "-rpcuser=${CORE_RPC_USERNAME}",
+             "-rpcpassword=${CORE_RPC_PASSWORD}",
+             "getblockchaininfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     networks:
       bitcoin:
         aliases:
@@ -76,18 +87,21 @@ services:
       <<: *default-env
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - ${DOCKERSTORAGEDIR}/blocks:/blocks                           # HDD-mounted blocks
-      - ${DOCKERCONFDIR}/bitcoin/bitcoin.conf:/bitcoin/bitcoin.conf   # NVMe-mounted config
-      - ${DOCKERCONFDIR}/bitcoin/bitcoin-data:/bitcoin                # NVMe-mounted chainstate, txindex, config
+      - ${DOCKERSTORAGEDIR}/blocks:/blocks                                        # HDD: Blocks
+      - ${DOCKERCONFDIR}/bitcoin/bitcoin-data:/bitcoin                            # NVMe: chainstate, txindex  | FIX: Reihenfolge getauscht
+      - ${DOCKERCONFDIR}/bitcoin/bitcoin.conf:/bitcoin/bitcoin.conf               # NVMe: config überschreibt Verzeichnis-Mount
 
 # Bitcoin RPC Explorer
 # https://github.com/janoside/btc-rpc-explorer
   bitcoin-explorer:
     profiles: ["bitcoin"]
     container_name: bitcoin-explorer
-    image: bitcoin-explorer:1.0  # use your built image, or build below
+    image: bitcoin-explorer:1.0
     build:
       context: ./bitcoin-explorer
+    depends_on:
+      bitcoind:
+        condition: service_healthy  # FIX: wartet auf gesunden Node
     <<: *common-logging-restart-unless-stopped
     networks:
       bitcoin:
@@ -101,16 +115,17 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - ${DOCKERCONFDIR}/bitcoin-explorer/bitcoin-explorer.conf:/app/.env:ro
 
-# CKPool and Proxy
+# CKPool Solo
 # https://bitbucket.org/ckolivas/ckpool-solo/src/solobtc/
   ckpool:
     profiles: ["bitcoin"]
     container_name: ckpool
-    image: ckpool:ckpool-solo        # how it will appear locally
+    image: ckpool:ckpool-solo
     build:
       context: ./cksolo
     depends_on:
-      - bitcoind
+      bitcoind:
+        condition: service_healthy  # FIX: wartet auf RPC-Bereitschaft, nicht nur Container-Start
     <<: *common-logging-restart-unless-stopped
     user: "${PUID}:${PGID}"
     networks:
@@ -118,9 +133,9 @@ services:
         aliases:
           - ckpool
     ports:
-      - "3333:3333"   # stratum
-      - "3334:3334"   # proxy (optional)
-      - "13531:13531" # Optional: CKProxy stats or internal port
+      - "3333:3333"   # Stratum (Bitaxe verbindet sich hier)
+      - "3334:3334"   # Proxy (optional)
+      - "13531:13531" # CKPool interne Stats
     environment:
       <<: *default-env
     volumes:
@@ -165,8 +180,10 @@ services:
     build:
       context: ./ckstats
     depends_on:
-      - ckpool
-      - ckstats-db
+      ckpool:
+        condition: service_started
+      ckstats-db:
+        condition: service_healthy  # FIX: wartet auf gesunde DB
     <<: *common-logging-restart-unless-stopped
     user: "${PUID}:${PGID}"
     networks:
@@ -174,10 +191,10 @@ services:
         aliases:
           - ckstats
     ports:
-      - "4000:3000"   # CKStats website
+      - "4000:3000"   # CKStats Web-Dashboard
     environment:
       <<: *default-env
-      REBUILD_APP: "0"              # Set to "1" to rebuild the app and run the migration
+      REBUILD_APP: "0"
       DB_HOST: "ckstats-db"
       DB_PORT: "5432"
       DB_USER: ${CKSTATS_DB_USER:-ckstats-mainnet}
@@ -187,6 +204,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - ${DOCKERCONFDIR}/cksolo/logs:/logs:ro
 
+# Fulcrum – Electrum Server für Mempool
 # https://github.com/cculianu/Fulcrum
   fulcrum:
     profiles: ["mempool"]
@@ -198,12 +216,18 @@ services:
         FULCRUM_VERSION: "1.12.0"
     stop_grace_period: 1m
     depends_on:
-      - bitcoind
+      bitcoind:
+        condition: service_healthy  # FIX: wartet auf gesunden Node
     <<: *common-logging-restart-unless-stopped
     networks:
       bitcoin:
         aliases:
+          - mempool-fulcrum
           - fulcrum
+    # Hinweis: Port 50001 nur intern im Docker-Netzwerk erreichbar.
+    # Für externen Zugriff (z. B. Wallet) hier freigeben:
+    # ports:
+    #   - "50001:50001"
     environment:
       <<: *default-env
     volumes:
@@ -211,10 +235,8 @@ services:
       - ${DOCKERCONFDIR}/fulcrum/data:/fulcrum
       - ${DOCKERCONFDIR}/fulcrum/fulcrum.conf:/config/fulcrum.conf
 
-
-
 ######################################################################################################
-# Mempool Explorer (Monitoring UI for Bitcoin)
+# Mempool Explorer
 # https://github.com/mempool/mempool/tree/master/docker
   mempool-web:
     profiles: ["mempool"]
@@ -224,13 +246,14 @@ services:
     stop_grace_period: 1m
     depends_on:
       - mempool-api
+      - mariadb  # FIX: explizite Abhängigkeit – mariadb muss mit "mempool"-Profil laufen
     <<: *common-logging-restart-unless-stopped
     networks:
       bitcoin:
         aliases:
           - mempool-web
     ports:
-      - "9800:8080"  # Web UI accessible at http://localhost:8080
+      - "9800:8080"
     environment:
       <<: *default-env
       FRONTEND_HTTP_PORT: "8080"
@@ -246,13 +269,12 @@ services:
     command: "./wait-for-it.sh mariadb:3306 --timeout=720 --strict -- ./start.sh"
     stop_grace_period: 1m
     depends_on:
-      - mariadb
+      - mariadb  # FIX: explizite Abhängigkeit
     <<: *common-logging-restart-unless-stopped
     networks:
       bitcoin:
         aliases:
           - mempool-api
-      muffinnetwork: {}
     environment:
       <<: *default-env
       MEMPOOL_BACKEND: "electrum"
@@ -275,8 +297,7 @@ services:
       - ${DOCKERCONFDIR}/mempool/cache:/backend/cache
 
 ######################################################################################################
-# Grafana & Influx DB
-# InfluxDB
+# Monitoring – InfluxDB + Grafana
   influxdb:
     profiles: ["bitcoin"]
     container_name: influxdb
@@ -298,19 +319,20 @@ services:
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN}
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - /etc/TZ:/etc/timezone:ro
+      - /etc/timezone:/etc/timezone:ro
       - ${DOCKERCONFDIR}/influxdb:/var/lib/influxdb2
 
   grafana:
     profiles: ["bitcoin"]
     container_name: grafana
     image: grafana/grafana-oss:latest
+    depends_on:
+      - influxdb
+    <<: *common-logging-restart-unless-stopped
     networks:
       bitcoin:
         aliases:
           - grafana
-    depends_on:
-      - influxdb
     ports:
       - 3000:3000
     environment:
