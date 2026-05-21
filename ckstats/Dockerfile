@@ -1,11 +1,11 @@
 # ckstats/Dockerfile
 
-FROM node:20-slim
+FROM node:22-slim
 
 LABEL maintainer="magicdude4eva" \
       org.opencontainers.image.authors="magicdude4eva" \
       org.opencontainers.image.documentation="https://github.com/magicdude4eva/btc-fullnode-stack" \
-      org.opencontainers.image.description="CKStats - A stats dashboard for CKPool-Solo, with PostgreSQL"
+    org.opencontainers.image.description="CKStats - A stats dashboard for CKPool-Solo (with external PostgreSQL)"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Europe/Vienna \
@@ -18,14 +18,10 @@ ENV CKSTATS_REF=${CKSTATS_REF}
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git curl cron supervisor ca-certificates postgresql postgresql-contrib && \
+    git curl cron supervisor ca-certificates postgresql-client && \
     corepack enable && \
     corepack prepare pnpm@latest --activate && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && update-ca-certificates --fresh
-
-VOLUME ["/var/lib/postgresql/data"]
-
-RUN sed -i 's/^\(local\s\+all\s\+all\s\+\)peer/\1trust/' /etc/postgresql/*/main/pg_hba.conf || true
 
 WORKDIR /app
 
@@ -36,11 +32,12 @@ RUN sed "s|LOG_PATH|${LOG_PATH}|" /tmp/.env.template > /tmp/.env
 # Clone & build CKStats at the exact commit if provided
 RUN git clone --filter=blob:none --depth 1 https://github.com/mrv777/ckstats.git /app && \
     if [ -n "$CKSTATS_REF" ]; then \
-      git -C /app fetch origin "$CKSTATS_REF" --depth 1 && \
-      git -C /app checkout --detach "$CKSTATS_REF"; \
+    git -C /app fetch origin "$CKSTATS_REF" --depth 1 && \
+    git -C /app checkout --detach "$CKSTATS_REF"; \
     fi && \
     mv /tmp/.env . && \
-    pnpm install --frozen-lockfile || pnpm install
+    pnpm install --no-frozen-lockfile --ignore-scripts
+
 
 COPY startup.sh supervisord.conf ckstats-cron /app/
 

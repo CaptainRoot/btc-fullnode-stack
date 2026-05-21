@@ -70,8 +70,8 @@ services:
       - "8332:8332"   # RPC
       - "8333:8333"   # P2P
       - "28332:28332" # ZMQ hashblock
-      - "28333:28333" # ZMQ rawblock      
-      - "28334:28334" # ZMQ rawtx      
+      - "28333:28333" # ZMQ rawblock
+      - "28334:28334" # ZMQ rawtx
     environment:
       <<: *default-env
     volumes:
@@ -100,7 +100,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ${DOCKERCONFDIR}/bitcoin-explorer/bitcoin-explorer.conf:/app/.env:ro
-      
+
 # CKPool and Proxy
 # https://bitbucket.org/ckolivas/ckpool-solo/src/solobtc/
   ckpool:
@@ -128,17 +128,45 @@ services:
       - ${DOCKERCONFDIR}/cksolo/ckpool.conf:/ckpool-conf/ckpool.conf:ro
       - ${DOCKERCONFDIR}/cksolo/logs:/logs
 
+# PostgreSQL Database for CKStats
+# https://www.postgresql.org/
+  ckstats-db:
+    profiles: ["bitcoin"]
+    container_name: ckstats-db
+    image: postgres:16-alpine
+    <<: *common-logging-restart-unless-stopped
+    networks:
+      bitcoin:
+        aliases:
+          - ckstats-db
+    ports:
+      - "5432:5432"
+    environment:
+      <<: *default-env
+      POSTGRES_USER: ${CKSTATS_DB_USER:-ckstats-mainnet}
+      POSTGRES_PASSWORD: ${CKSTATS_DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${CKSTATS_DB_NAME:-ckstats-mainnet}
+      POSTGRES_INITDB_ARGS: "-c max_connections=200"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ${DOCKERCONFDIR}/ckstats/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CKSTATS_DB_USER:-ckstats-mainnet}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 # CKStats
-# Contains CKStats and PostgresSQL
 # https://github.com/mrv777/ckstats
   ckstats:
     profiles: ["bitcoin"]
     container_name: ckstats
-    image: ckstats-allinone:1.0
+    image: ckstats:1.0
     build:
       context: ./ckstats
     depends_on:
       - ckpool
+      - ckstats-db
     <<: *common-logging-restart-unless-stopped
     user: "${PUID}:${PGID}"
     networks:
@@ -150,13 +178,16 @@ services:
     environment:
       <<: *default-env
       REBUILD_APP: "0"              # Set to "1" to rebuild the app and run the migration
-      DB_REINITIALISE: "0"          # Set to "1" to delete the entire database and wipe /ckstats/pgdata/*
+      DB_HOST: "ckstats-db"
+      DB_PORT: "5432"
+      DB_USER: ${CKSTATS_DB_USER:-ckstats-mainnet}
+      DB_PASSWORD: ${CKSTATS_DB_PASSWORD:-changeme}
+      DB_NAME: ${CKSTATS_DB_NAME:-ckstats-mainnet}
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ${DOCKERCONFDIR}/cksolo/logs:/logs:ro
-      - ${DOCKERCONFDIR}/ckstats/pgdata:/var/lib/postgresql/data
-      
-# https://github.com/cculianu/Fulcrum            
+
+# https://github.com/cculianu/Fulcrum
   fulcrum:
     profiles: ["mempool"]
     container_name: mempool-fulcrum
